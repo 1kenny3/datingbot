@@ -7,6 +7,8 @@ from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemo
 from typing import List, Optional
 import os
 from dotenv import load_dotenv
+from profile_editor import register_handlers
+
 from database import (
     get_profile, add_profile, get_matching_profiles, add_like,
     get_user_interests, add_user_interests, get_all_interests,
@@ -33,8 +35,6 @@ bot = Bot(token=TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(bot, storage=storage)
 
-# ... остальной код остается без изменений ...
-
 # Состояния FSM
 class ProfileStates(StatesGroup):
     name = State()
@@ -53,10 +53,10 @@ def get_main_keyboard(user_id: int) -> ReplyKeyboardMarkup:
     
     if profile:
         keyboard.add(KeyboardButton("👀 Смотреть анкеты"))
+        keyboard.add(KeyboardButton("👤 Мой профиль"))  # Добавляем новую кнопку
         
-        # Проверяем наличие непросмотренных лайков
         recent_likes = get_recent_likes(user_id)
-        if recent_likes:  # Кнопка появляется только если есть лайки
+        if recent_likes:
             keyboard.add(KeyboardButton("👀 Посмотреть кто лайкнул"))
             
         keyboard.add(KeyboardButton("📝 Редактировать профиль"))
@@ -702,7 +702,68 @@ async def skip_profile(message: types.Message, state: FSMContext):
         reply_markup=get_main_keyboard(message.from_user.id)
     )
 
+
+@dp.message_handler(lambda message: message.text == "👤 Мой профиль")
+async def show_my_profile(message: types.Message):
+    try:
+        user_id = message.from_user.id
+        profile = get_profile(user_id)
+        
+        if not profile:
+            await message.answer(
+                "У вас еще нет профиля. Создайте его!",
+                reply_markup=get_main_keyboard(user_id)
+            )
+            return
+            
+        # Получаем интересы пользователя
+        user_interests = get_user_interests(user_id)
+        interests_text = ", ".join(user_interests) if user_interests else "Не указаны"
+        
+        # Маппинг для отображения пола
+        gender_map = {"M": "Мужской", "F": "Женский"}
+        looking_for_map = {
+            "M": "Мужчин",
+            "F": "Женщин",
+            "MF": "Всех"
+        }
+        
+        # Формируем текст профиля
+        profile_text = (
+            f"👤 Ваш профиль:\n\n"
+            f"Имя: {profile[1]}\n"
+            f"Возраст: {profile[2]}\n"
+            f"Пол: {gender_map.get(profile[5], 'Не указан')}\n"
+            f"Ищу: {looking_for_map.get(profile[6], 'Не указано')}\n"
+            f"Город: {profile[7] if profile[7] else 'Не указан'}\n"
+            f"О себе: {profile[3]}\n\n"
+            f"Интересы: {interests_text}\n\n"
+        )
+        
+        try:
+            # Отправляем фото с подписью
+            await bot.send_photo(
+                chat_id=message.chat.id,
+                photo=profile[4],  # photo_id
+                caption=profile_text,
+                reply_markup=get_main_keyboard(user_id)
+            )
+        except Exception as e:
+            logger.error(f"Error sending profile photo: {e}")
+            await message.answer(
+                f"❌ Фото недоступно\n\n{profile_text}",
+                reply_markup=get_main_keyboard(user_id)
+            )
+            
+    except Exception as e:
+        logger.error(f"Error showing profile: {e}", exc_info=True)
+        await message.answer(
+            "Произошла ошибка при отображении профиля.",
+            reply_markup=get_main_keyboard(user_id)
+        )
+
 # Запуск бота
 if __name__ == '__main__':
     from aiogram import executor
+    register_handlers(dp)  # Регистрируем обработчики редактирования профиля
     executor.start_polling(dp, skip_updates=True)

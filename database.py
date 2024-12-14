@@ -449,6 +449,77 @@ def get_last_like(user_id: int) -> Optional[tuple]:
     except Exception as e:
         logger.error(f"Error getting last like for user {user_id}: {e}")
         return None
+    
+def update_profile(user_id: int, **kwargs) -> bool:
+    """
+    Обновляет профиль пользователя.
+    
+    Args:
+        user_id (int): ID пользователя
+        **kwargs: Поля для обновления (name, age, description, photo_id, gender, looking_for, city)
+    
+    Returns:
+        bool: True если обновление успешно, False в противном случае
+    """
+    conn = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        # Формируем SQL запрос для обновления
+        update_fields = []
+        values = []
+        
+        for key, value in kwargs.items():
+            update_fields.append(f"{key} = ?")
+            values.append(value)
+            
+        if not update_fields:
+            return False
+            
+        values.append(user_id)
+        
+        query = f"""
+            UPDATE profiles 
+            SET {', '.join(update_fields)}, last_active = CURRENT_TIMESTAMP
+            WHERE user_id = ?
+        """
+        
+        cursor.execute(query, values)
+        conn.commit()
+        logger.info(f"Profile updated for user {user_id}: {kwargs}")
+        
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error updating profile: {e}")
+        if conn:
+            conn.rollback()
+        return False
+        
+    finally:
+        if conn:
+            conn.close()
+
+def get_all_users() -> list:
+    """Получает ID всех пользователей"""
+    conn = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT user_id FROM profiles")
+        
+        # Возвращаем список ID пользователей
+        return [row[0] for row in cursor.fetchall()]
+        
+    except Exception as e:
+        logger.error(f"Error getting all users: {e}")
+        return []
+    finally:
+        if conn:
+            conn.close()
+
 def update_last_active(user_id: int):
     """Обновляет время последней активности пользователя"""
     try:
