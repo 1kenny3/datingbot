@@ -33,7 +33,7 @@ def init_db():
     try:
         c = conn.cursor()
         
-        # Создание таблицы профилей с полем username
+        # Создание таблицы профиле�� с полем username
         c.execute('''
             CREATE TABLE IF NOT EXISTS profiles (
                 user_id INTEGER PRIMARY KEY,
@@ -181,12 +181,18 @@ def execute_query(query: str, params: tuple = (), fetch: bool = False):
             connection.close()
             logger.debug("Database connection closed")
 
+
 def get_profile(user_id: int) -> Optional[tuple]:
     """Получает профиль пользователя"""
     try:
-        query = "SELECT * FROM profiles WHERE user_id = ?"
+        query = """
+            SELECT user_id, name, age, description, photo_id, gender, looking_for, city, username
+            FROM profiles WHERE user_id = ?
+        """
         result = execute_query(query, (user_id,), fetch=True)
         logger.info(f"Retrieved profile for user {user_id}: {'Found' if result else 'Not found'}")
+        if result:
+            logger.debug(f"Profile data: {result[0]}")
         return result[0] if result else None
     except Exception as e:
         logger.error(f"Error getting profile for user {user_id}: {e}")
@@ -203,7 +209,7 @@ def add_profile(user_id: int, name: str, age: int, description: str,
         '''
         execute_query(query, (user_id, name, age, description, photo_id, 
                             gender, looking_for, city, username))
-        logger.info(f"Profile added/updated for user {user_id}")
+        logger.info(f"Profile added/updated for user {user_id} with username {username}")
     except Exception as e:
         logger.error(f"Error adding/updating profile for user {user_id}: {e}")
         raise
@@ -528,6 +534,16 @@ def update_last_active(user_id: int):
         logger.debug(f"Updated last_active for user {user_id}")
     except Exception as e:
         logger.error(f"Error updating last_active for user {user_id}: {e}")
+        raise
+
+def update_username(user_id: int, username: str):
+    """Обновляет username пользователя"""
+    try:
+        query = "UPDATE profiles SET username = ? WHERE user_id = ?"
+        execute_query(query, (username, user_id))
+        logger.info(f"Updated username for user {user_id}: {username}")
+    except Exception as e:
+        logger.error(f"Error updating username for user {user_id}: {e}")
         raise
 
 # Инициализация базы данных при импорте модуля

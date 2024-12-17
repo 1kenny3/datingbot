@@ -9,11 +9,13 @@ import os
 from dotenv import load_dotenv
 from profile_editor import register_handlers
 
+
 from database import (
     get_profile, add_profile, get_matching_profiles, add_like,
     get_user_interests, add_user_interests, get_all_interests,
     add_viewed_profile, check_mutual_like, add_report, add_block,
-    get_recent_likes, update_last_active, clear_user_interests
+    get_recent_likes, update_last_active, clear_user_interests,
+    update_username
 )
 
 # Загрузка переменных окружения
@@ -124,13 +126,50 @@ def get_interests_keyboard(selected_interests: List[int] = None) -> InlineKeyboa
 @dp.message_handler(commands=['start'])
 async def cmd_start(message: types.Message):
     user_id = message.from_user.id
+    username = message.from_user.username
+    if username:
+        update_username(user_id, username)
     profile = get_profile(user_id)
     
     if profile:
-        await message.answer(
-            "С возвращением! Выберите действие:",
-            reply_markup=get_main_keyboard(user_id)
+        # Получаем интересы пользователя
+        user_interests = get_user_interests(user_id)
+        interests_text = ", ".join(user_interests) if user_interests else "Не указаны"
+        
+        # Маппинг для отображения пола
+        gender_map = {"M": "Мужской", "F": "Женский"}
+        looking_for_map = {
+            "M": "Мужчин",
+            "F": "Женщин",
+            "MF": "Всех"
+        }
+        
+        # Формируем текст профиля
+        profile_text = (
+            f"👤 Ваш профиль:\n\n"
+            f"Имя: {profile[1]}\n"
+            f"Возраст: {profile[2]}\n"
+            f"Пол: {gender_map.get(profile[5], 'Не указан')}\n"
+            f"Ищу: {looking_for_map.get(profile[6], 'Не указано')}\n"
+            f"Город: {profile[7] if profile[7] else 'Не указан'}\n"
+            f"О себе: {profile[3]}\n\n"
+            f"Интересы: {interests_text}\n\n"
         )
+        
+        try:
+            # Отправляем фото с подписью
+            await bot.send_photo(
+                chat_id=message.chat.id,
+                photo=profile[4],  # photo_id
+                caption=profile_text,
+                reply_markup=get_main_keyboard(user_id)
+            )
+        except Exception as e:
+            logger.error(f"Error sending profile photo: {e}")
+            await message.answer(
+                f"❌ Фото недоступно\n\n{profile_text}",
+                reply_markup=get_main_keyboard(user_id)
+            )
     else:
         await message.answer(
             "Добро пожаловать! Для начала создайте свой профиль:",
@@ -324,7 +363,7 @@ async def process_interests_done(callback_query: types.CallbackQuery, state: FSM
         
         user_id = callback_query.from_user.id
         
-        # Сохраняем профиль
+        # Сохраняем профиль с username
         add_profile(
             user_id=user_id,
             name=data['name'],
@@ -333,7 +372,8 @@ async def process_interests_done(callback_query: types.CallbackQuery, state: FSM
             photo_id=data['photo_id'],
             gender=data['gender'],
             looking_for=data['looking_for'],
-            city=data.get('city')
+            city=data.get('city'),
+            username=data.get('username')
         )
         
         # Сохраняем интересы
@@ -434,7 +474,7 @@ async def send_next_profile(message: types.Message, user_id: int):
         caption = (
             f"Имя: {name}\n"
             f"Возраст: {age}\n"
-            f"О себе: {description}\n"
+            f"О себ��: {description}\n"
             f"Интересы: {interests_text}"
         )
         
@@ -553,10 +593,14 @@ async def show_who_liked(message: types.Message, state: FSMContext):
         # Берем самый последний лайк
         liked_from_id, name, age, description, photo_id, timestamp = recent_likes[0]
         
+        # Получаем профиль лайкнувшего пользователя
+        liker_profile = get_profile(liked_from_id)
+        username = liker_profile[8] if liker_profile and len(liker_profile) > 8 else "нет_username"
+        
         # Сохраняем ID пользователя для возможного ответного лайка
         await state.update_data(current_profile_id=liked_from_id)
         
-        # Создаем клавиатуру для ответного действия
+        # Создаем клавиатуру для отвтного действия
         response_keyboard = ReplyKeyboardMarkup(resize_keyboard=True)
         response_keyboard.row(
             KeyboardButton("👎 Пропустить"),
@@ -568,7 +612,7 @@ async def show_who_liked(message: types.Message, state: FSMContext):
             f"Вас лайкнул(а):\n\n"
             f"Имя: {name}\n"
             f"Возраст: {age}\n"
-            f"О себе: {description}"
+            f"О себе: {description}\n"
         )
         
         try:
@@ -617,7 +661,7 @@ async def handle_report(message: types.Message, state: FSMContext):
         logger.error(f"Error handling report: {e}", exc_info=True)
         await message.answer("Произошла ошибка при отправке жалобы.")
 
-# Возврат в главное меню
+# Возврат в главно�� меню
 @dp.message_handler(lambda message: message.text == "🏠 В главное меню")
 async def return_to_main_menu(message: types.Message, state: FSMContext):
     await state.finish()
@@ -652,24 +696,26 @@ async def process_return_like(message: types.Message, state: FSMContext):
                 matched_name = matched_profile[1]
                 user_name = user_profile[1]
                 
-                # Создаем ссылку на профиль
-                match_text = (
-                    f"💕 У вас взаимная симпатия с {matched_name}!\n\n"
-                    f"Написать в личные сообщения: @{matched_profile[8] if len(matched_profile) > 8 else 'нет_username'}\n"
-                    f"или перейти по ссылке: https://t.me/{matched_profile[8] if len(matched_profile) > 8 else 'нет_username'}"
-                )
+                # Получаем username и формируем контактную информацию
+                matched_username = matched_profile[8]
+                contact_info = ""
+                if matched_username:
+                    contact_info = f"\n\nНаписать в личные сообщения: @{matched_username}\nили перейти по ссылке: https://t.me/{matched_username}"
+                
+                match_text = f"💕 У вас взаимная симпатия с {matched_name}!{contact_info}"
+                
+                # То же самое для второго пользователя
+                user_username = user_profile[8]
+                other_contact_info = ""
+                if user_username:
+                    other_contact_info = f"\n\nНаписать в личные сообщения: @{user_username}\nили перейти по ссылке: https://t.me/{user_username}"
+                
+                other_match_text = f"💕 У вас взаимная симпатия с {user_name}!{other_contact_info}"
                 
                 await message.answer(
                     match_text,
                     reply_markup=get_main_keyboard(user_id),
                     disable_web_page_preview=True
-                )
-                
-                # Отправляем уведомление второму пользователю
-                other_match_text = (
-                    f"💕 У вас взаимная симпатия с {user_name}!\n\n"
-                    f"Написать в личные сообщения: @{user_profile[8] if len(user_profile) > 8 else 'нет_username'}\n"
-                    f"или перейти по ссылке: https://t.me/{user_profile[8] if len(user_profile) > 8 else 'нет_username'}"
                 )
                 
                 await bot.send_message(
@@ -765,5 +811,4 @@ async def show_my_profile(message: types.Message):
 # Запуск бота
 if __name__ == '__main__':
     from aiogram import executor
-    register_handlers(dp)  # Регистрируем обработчики редактирования профиля
     executor.start_polling(dp, skip_updates=True)
