@@ -33,7 +33,7 @@ def init_db():
     try:
         c = conn.cursor()
         
-        # Создание таблицы профиле�� с полем username
+        # Создание таблицы профилей с полем username
         c.execute('''
             CREATE TABLE IF NOT EXISTS profiles (
                 user_id INTEGER PRIMARY KEY,
@@ -545,6 +545,21 @@ def update_username(user_id: int, username: str):
     except Exception as e:
         logger.error(f"Error updating username for user {user_id}: {e}")
         raise
+
+def get_users_by_interests(interest_ids: List[int]) -> List[int]:
+    """Получает список пользователей, у которых есть указанные интересы"""
+    try:
+        query = '''
+            SELECT DISTINCT user_id 
+            FROM user_interests 
+            WHERE interest_id IN ({})
+        '''.format(','.join(['?'] * len(interest_ids)))
+        
+        result = execute_query(query, tuple(interest_ids), fetch=True)
+        return [row[0] for row in result]
+    except Exception as e:
+        logger.error(f"Error getting users by interests: {e}")
+        return []
 
 # Инициализация базы данных при импорте модуля
 init_db()

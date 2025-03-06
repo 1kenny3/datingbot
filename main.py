@@ -15,7 +15,7 @@ from database import (
     get_user_interests, add_user_interests, get_all_interests,
     add_viewed_profile, check_mutual_like, add_report, add_block,
     get_recent_likes, update_last_active, clear_user_interests,
-    update_username, get_all_users
+    update_username, get_all_users, get_users_by_interests
 )
 
 # Загрузка переменных окружения
@@ -48,6 +48,7 @@ class ProfileStates(StatesGroup):
     photo = State()
     interests = State()
     broadcast_message = State()
+    broadcast_interests = State()
 
 # Клавиатуры
 def get_main_keyboard(user_id: int) -> ReplyKeyboardMarkup:
@@ -820,28 +821,126 @@ async def start_broadcast(message: types.Message):
 
 @dp.message_handler(state=ProfileStates.broadcast_message)
 async def process_broadcast_message(message: types.Message, state: FSMContext):
-    ADMIN_ID = int(os.getenv('ADMIN_ID').split()[0])  # Загружаем ID администратора из переменных окружения
-    admin_id = ADMIN_ID  # Используем загруженный ID администратора
-    await bot.send_message(
-        chat_id=admin_id,
-        text=f"Сообщение от {message.from_user.username}:\n{message.text}",
-        reply_markup=InlineKeyboardMarkup().add(
-            InlineKeyboardButton("✅ Подтвердить", callback_data="confirm_broadcast"),
-            InlineKeyboardButton("❌ Отклонить", callback_data="decline_broadcast")
-        )
+    await state.update_data(broadcast_message=message.text)
+    await message.answer(
+        "Выберите интересы, которым будет отправлено сообщение:",
+        reply_markup=get_interests_keyboard()
     )
-    await message.answer("Ваше сообщение отправлено администратору.")
-    await state.finish()
+    await ProfileStates.broadcast_interests.set()
+
+@dp.callback_query_handler(lambda c: c.data.startswith('interest_'), state=ProfileStates.broadcast_interests)
+async def process_broadcast_interest_selection(callback_query: types.CallbackQuery, state: FSMContext):
+    try:
+        await callback_query.answer()
+        
+        interest_id = int(callback_query.data.split('_')[1])
+        data = await state.get_data()
+        
+        selected_interests = data.get('selected_interests', [])
+        if interest_id in selected_interests:
+            selected_interests.remove(interest_id)
+        else:
+            selected_interests.append(interest_id)
+        
+        await state.update_data(selected_interests=selected_interests)
+        
+        interests = get_all_interests()
+        selected_names = [name for id_, name in interests if id_ in selected_interests]
+        
+        text = "Выберите интересы, которым будет отправлено сообщение:\n\n"
+        if selected_names:
+            text += f"Выбрано: {', '.join(selected_names)}"
+        else:
+            text += "Пока ничего не выбрано"
+            
+        await callback_query.message.edit_text(
+            text=text,
+            reply_markup=get_interests_keyboard(selected_interests)
+        )
+        
+    except Exception as e:
+        logger.error(f"Error in process_broadcast_interest_selection: {e}", exc_info=True)
+        await callback_query.message.answer("Произошла ошибка при выборе интересов")
+
+@dp.callback_query_handler(lambda c: c.data == 'interests_done', state=ProfileStates.broadcast_interests)
+async def process_broadcast_interests_done(callback_query: types.CallbackQuery, state: FSMContext):
+    try:
+        data = await state.get_data()
+        selected_interests = data.get('selected_interests', [])
+        
+        if not selected_interests:
+            await callback_query.answer("Выберите хотя бы один интерес!")
+            return
+        
+        await state.update_data(selected_interests=selected_interests)
+        
+        ADMIN_ID = int(os.getenv('ADMIN_ID').split()[0])  # Загружаем ID администратора из переменных окружения
+        admin_id = ADMIN_ID  # Используем загруженный ID администратора
+        
+        await bot.send_message(
+            chat_id=admin_id,
+            text=f"Сообщение от {callback_query.from_user.username}:\n{data['broadcast_message']}\n\nВыбранные интересы: {', '.join([name for id_, name in get_all_interests() if id_ in selected_interests])}",
+            reply_markup=InlineKeyboardMarkup().add(
+                InlineKeyboardButton("✅ Подтвердить", callback_data="confirm_broadcast"),
+                InlineKeyboardButton("❌ Отклонить", callback_data="decline_broadcast")
+            )
+        )
+        await callback_query.message.answer("Ваше сообщение отправлено администратору.")
+        await state.finish()
+        
+    except Exception as e:
+        logger.error(f"Error in process_broadcast_interests_done: {e}", exc_info=True)
+        await callback_query.message.answer(
+            "Произошла ошибка при отправке сообщения администратору.",
+            reply_markup=get_main_keyboard(callback_query.from_user.id)
+        )
 
 @dp.callback_query_handler(lambda c: c.data == 'confirm_broadcast')
-async def confirm_broadcast(callback_query: types.CallbackQuery):
+async def confirm_broadcast(callback_query: types.CallbackQuery, state: FSMContext):
     await callback_query.answer()
-    # Получаем текст сообщения из callback_query.message.text
-    message_text = callback_query.message.text.split(':', 1)[1].strip()
-    username = callback_query.message.text.split(':')[0].split(' ')[-1]  # Получаем username отправителя
-    all_users = get_all_users()  # Получаем всех пользователей
-    for user_id in all_users:
-        await bot.send_message(user_id, f"{message_text}\nНаписать в личные сообщения: @{username}")
+    logger.info(f"Confirm broadcast button pressed by {callback_query.from_user.username}")
+    
+    try:
+        # Получаем текст сообщения и выбранные интересы из callback_query.message.text
+        if not callback_query.message.text:
+            await callback_query.answer("Ошибка: данные сообщения отсутствуют.")
+            return
+        
+        message_text = callback_query.message.text.split('\n\n')[0].split(':', 1)[1].strip()
+        selected_interests_text = callback_query.message.text.split('\n\n')[1].split(': ')[1]
+        
+        logger.info(f"Message text: {message_text}")
+        logger.info(f"Selected interests: {selected_interests_text}")
+        
+        # Получаем ID выбранных интересов
+        all_interests = get_all_interests()
+        selected_interests = [id_ for id_, name in all_interests if name in selected_interests_text.split(', ')]
+        
+        logger.info(f"Selected interest IDs: {selected_interests}")
+        
+        # Получаем всех пользователей, у которых есть выбранные интересы
+        users_with_interests = get_users_by_interests(selected_interests)
+        
+        logger.info(f"Users with selected interests: {users_with_interests}")
+        
+        if not users_with_interests:
+            await callback_query.message.answer("Нет пользователей с выбранными интересами.")
+            return
+        
+        username = callback_query.message.text.split(':')[0].split(' ')[-1]  # Получаем username отправителя
+        for user_id in users_with_interests:
+            try:
+                await bot.send_message(user_id, f"{message_text}\nНаписать в личные сообщения: @{username}")
+                logger.info(f"Message sent to user {user_id}")
+            except Exception as e:
+                logger.error(f"Error sending message to user {user_id}: {e}")
+        
+        await callback_query.message.answer("Рассылка успешно отправлена!")
+        await state.finish()
+        
+    except Exception as e:
+        logger.error(f"Error in confirm_broadcast: {e}", exc_info=True)
+        await callback_query.message.answer("Произошла ошибка при отправке рассылки.")
 
 @dp.callback_query_handler(lambda c: c.data == 'decline_broadcast')
 async def decline_broadcast(callback_query: types.CallbackQuery):
