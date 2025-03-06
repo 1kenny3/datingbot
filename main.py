@@ -820,11 +820,11 @@ async def start_broadcast(message: types.Message):
 
 @dp.message_handler(state=ProfileStates.broadcast_message)
 async def process_broadcast_message(message: types.Message, state: FSMContext):
-    ADMIN_ID = int(os.getenv('ADMIN_ID'))  # Загружаем ID администратора из переменных окружения
+    ADMIN_ID = int(os.getenv('ADMIN_ID').split()[0])  # Загружаем ID администратора из переменных окружения
     admin_id = ADMIN_ID  # Используем загруженный ID администратора
     await bot.send_message(
         chat_id=admin_id,
-        text=f"Сообщение от @{message.from_user.username}:\n{message.text}",
+        text=f"Сообщение от {message.from_user.username}:\n{message.text}",
         reply_markup=InlineKeyboardMarkup().add(
             InlineKeyboardButton("✅ Подтвердить", callback_data="confirm_broadcast"),
             InlineKeyboardButton("❌ Отклонить", callback_data="decline_broadcast")
@@ -837,11 +837,11 @@ async def process_broadcast_message(message: types.Message, state: FSMContext):
 async def confirm_broadcast(callback_query: types.CallbackQuery):
     await callback_query.answer()
     # Получаем текст сообщения из callback_query.message.text
-    message_text = callback_query.message.text.split(':', 1)[1].strip() + f"\nНаписать @{callback_query.from_user.username} для обсуждения."  # Добавляем ссылку на пользователя
+    message_text = callback_query.message.text.split(':', 1)[1].strip()
+    username = callback_query.message.text.split(':')[0].split(' ')[-1]  # Получаем username отправителя
     all_users = get_all_users()  # Получаем всех пользователей
     for user_id in all_users:
-        await bot.send_message(user_id, message_text)
-    await callback_query.message.answer("Сообщение успешно отправлено всем пользователям.")
+        await bot.send_message(user_id, f"{message_text}\nНаписать в личные сообщения: @{username}")
 
 @dp.callback_query_handler(lambda c: c.data == 'decline_broadcast')
 async def decline_broadcast(callback_query: types.CallbackQuery):
