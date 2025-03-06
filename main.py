@@ -15,7 +15,7 @@ from database import (
     get_user_interests, add_user_interests, get_all_interests,
     add_viewed_profile, check_mutual_like, add_report, add_block,
     get_recent_likes, update_last_active, clear_user_interests,
-    update_username
+    update_username, get_all_users
 )
 
 # Загрузка переменных окружения
@@ -47,6 +47,7 @@ class ProfileStates(StatesGroup):
     description = State()
     photo = State()
     interests = State()
+    broadcast_message = State()
 
 # Клавиатуры
 def get_main_keyboard(user_id: int) -> ReplyKeyboardMarkup:
@@ -62,6 +63,7 @@ def get_main_keyboard(user_id: int) -> ReplyKeyboardMarkup:
             keyboard.add(KeyboardButton("👀 Посмотреть кто лайкнул"))
             
         keyboard.add(KeyboardButton("📝 Редактировать профиль"))
+        keyboard.add(KeyboardButton("📢 Рассылка"))  # Добавляем кнопку рассылки
     else:
         keyboard.add(KeyboardButton("📝 Создать профиль"))
     
@@ -474,7 +476,7 @@ async def send_next_profile(message: types.Message, user_id: int):
         caption = (
             f"Имя: {name}\n"
             f"Возраст: {age}\n"
-            f"О себ��: {description}\n"
+            f"О себе: {description}\n"
             f"Интересы: {interests_text}"
         )
         
@@ -661,7 +663,7 @@ async def handle_report(message: types.Message, state: FSMContext):
         logger.error(f"Error handling report: {e}", exc_info=True)
         await message.answer("Произошла ошибка при отправке жалобы.")
 
-# Возврат в главно�� меню
+# Возврат в главное меню
 @dp.message_handler(lambda message: message.text == "🏠 В главное меню")
 async def return_to_main_menu(message: types.Message, state: FSMContext):
     await state.finish()
@@ -807,6 +809,44 @@ async def show_my_profile(message: types.Message):
             "Произошла ошибка при отображении профиля.",
             reply_markup=get_main_keyboard(user_id)
         )
+
+@dp.message_handler(lambda message: message.text == "📢 Рассылка")
+async def start_broadcast(message: types.Message):
+    await message.answer(
+        "Введите текст сообщения для рассылки:",
+        reply_markup=ReplyKeyboardRemove()
+    )
+    await ProfileStates.broadcast_message.set()
+
+@dp.message_handler(state=ProfileStates.broadcast_message)
+async def process_broadcast_message(message: types.Message, state: FSMContext):
+    ADMIN_ID = int(os.getenv('ADMIN_ID'))  # Загружаем ID администратора из переменных окружения
+    admin_id = ADMIN_ID  # Используем загруженный ID администратора
+    await bot.send_message(
+        chat_id=admin_id,
+        text=f"Сообщение от {message.from_user.username}:\n{message.text}",
+        reply_markup=InlineKeyboardMarkup().add(
+            InlineKeyboardButton("✅ Подтвердить", callback_data="confirm_broadcast"),
+            InlineKeyboardButton("❌ Отклонить", callback_data="decline_broadcast")
+        )
+    )
+    await message.answer("Ваше сообщение отправлено администратору.")
+    await state.finish()
+
+@dp.callback_query_handler(lambda c: c.data == 'confirm_broadcast')
+async def confirm_broadcast(callback_query: types.CallbackQuery):
+    await callback_query.answer()
+    # Получаем текст сообщения из callback_query.message.text
+    message_text = callback_query.message.text.split(':', 1)[1].strip()
+    all_users = get_all_users()  # Получаем всех пользователей
+    for user_id in all_users:
+        await bot.send_message(user_id, message_text)
+    await callback_query.message.answer("Сообщение успешно отправлено всем пользователям.")
+
+@dp.callback_query_handler(lambda c: c.data == 'decline_broadcast')
+async def decline_broadcast(callback_query: types.CallbackQuery):
+    await callback_query.answer()
+    await callback_query.message.answer("Сообщение отклонено.")
 
 # Запуск бота
 if __name__ == '__main__':
