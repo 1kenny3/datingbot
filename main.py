@@ -824,7 +824,7 @@ async def process_broadcast_message(message: types.Message, state: FSMContext):
     admin_id = ADMIN_ID  # Используем загруженный ID администратора
     await bot.send_message(
         chat_id=admin_id,
-        text=f"Сообщение от {message.from_user.username}:\n{message.text}",
+        text=f"Сообщение от @{message.from_user.username}:\n{message.text}",
         reply_markup=InlineKeyboardMarkup().add(
             InlineKeyboardButton("✅ Подтвердить", callback_data="confirm_broadcast"),
             InlineKeyboardButton("❌ Отклонить", callback_data="decline_broadcast")
@@ -837,7 +837,7 @@ async def process_broadcast_message(message: types.Message, state: FSMContext):
 async def confirm_broadcast(callback_query: types.CallbackQuery):
     await callback_query.answer()
     # Получаем текст сообщения из callback_query.message.text
-    message_text = callback_query.message.text.split(':', 1)[1].strip()
+    message_text = callback_query.message.text.split(':', 1)[1].strip() + f"\nНаписать @{callback_query.from_user.username} для обсуждения."  # Добавляем ссылку на пользователя
     all_users = get_all_users()  # Получаем всех пользователей
     for user_id in all_users:
         await bot.send_message(user_id, message_text)
